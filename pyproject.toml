@@ -1,0 +1,215 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "musical-mel-transform"
+dynamic = ["version"]
+description = "A PyTorch-based musical mel-frequency transform for audio processing"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+keywords = ["audio", "mel", "transform", "music", "pytorch", "signal-processing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.8"
+dependencies = [
+    # Core dependencies
+    "torch>=2.1.0",           # Improved ONNX export support
+    "torchaudio>=2.1.0",
+    "numpy>=1.21.0",
+    "scipy>=1.7.0",
+    "librosa>=0.9.0",
+    "onnx>=1.16.0",           # Latest stable
+    "onnxruntime>=1.17.0",    # Latest stable
+    "onnxscript>=0.1.0.dev20240617",  # Recent dev version
+
+    # Plotting dependencies
+    "matplotlib>=3.7.5",
+    "seaborn>=0.11.0",
+
+    # Development dependencies
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.0.0",
+    "flake8>=5.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "tqdm>=4.64.0",
+    "ipython>=8.12.3",
+
+    # Documentation dependencies
+    "sphinx>=5.0.0",
+    "sphinx-rtd-theme>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/worldveil/musical_mel_transform_torch"
+Repository = "https://github.com/worldveil/musical_mel_transform_torch.git"
+Issues = "https://github.com/worldveil/musical_mel_transform_torch/issues"
+
+[project.scripts]
+musical-mel-demo = "musical_mel_transform.scripts.demo:main"
+
+[tool.hatch.version]
+path = "src/musical_mel_transform/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/musical_mel_transform"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["musical_mel_transform"]
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = [
+    # Docstring warnings - not critical for functionality
+    "D100",  # Missing docstring in public module
+    "D101",  # Missing docstring in public class
+    "D102",  # Missing docstring in public method
+    "D103",  # Missing docstring in public function
+    "D104",  # Missing docstring in public package
+    "D105",  # Missing docstring in magic method
+    "D106",  # Missing docstring in public nested class
+    "D107",  # Missing docstring in __init__
+    "D200",  # One-line docstring should fit on one line
+    "D202",  # No blank lines allowed after function docstring
+    "D205",  # 1 blank line required between summary line and description
+    "D400",  # First line should end with a period
+    "D401",  # First line should be in imperative mood
+    "D403",  # First word of the first line should be properly capitalized
+    # F-string warnings
+    "F541",  # f-string is missing placeholders
+    # Import warnings in development/test files
+    "F401",  # imported but unused (can be useful for debugging)
+]
+per-file-ignores = [
+    # Test files can be more relaxed
+    "tests/*:F401,E501",
+    # Scripts can have longer lines occasionally
+    "src/musical_mel_transform/scripts/*:E501",
+]
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".venv",
+    ".tox",
+]
+
+[tool.mypy]
+python_version = "3.8"
+# Relaxed settings for development - focus on important type issues
+warn_return_any = false          # Can be noisy during development
+warn_unused_configs = true
+disallow_untyped_defs = false    # Allow untyped function definitions
+disallow_incomplete_defs = false # Allow incomplete type definitions
+check_untyped_defs = false       # Don't check bodies of untyped functions
+disallow_untyped_decorators = false  # Allow untyped decorators
+no_implicit_optional = false    # Allow implicit Optional
+warn_redundant_casts = false    # Can be noisy
+warn_unused_ignores = false     # Allow unused type: ignore comments
+warn_no_return = true           # Keep this - important for logic
+warn_unreachable = false        # Can be noisy during development
+strict_equality = false         # Can be restrictive
+
+[[tool.mypy.overrides]]
+module = [
+    "scipy.*",
+    "librosa.*",
+    "matplotlib.*",
+    "seaborn.*",
+    "onnx.*",
+    "onnxruntime.*",
+    "tqdm.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Very relaxed settings for test files
+module = "tests.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# Relaxed settings for script files
+module = "musical_mel_transform.scripts.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=musical_mel_transform",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/scripts/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
