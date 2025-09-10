@@ -60,12 +60,12 @@ Looking at the resulting features across different musically-relevant frequency 
 As you can see:
 
 * The vanilla FFT has a huge number of features, most of which are on veryyy high frequencies >6khz, which is non-ideal
-* Under 150hz, where low or sub-"bass" lives, `MusicalMelTransform` is far more granular
+* Under 150hz, where low or sub-"bass" lives, `MusicalMelTransform` interpolates much more smoothly
 * Under 500hz, the `MusicalMelTransform` has the best coverage -- where most all the bass, root notes, and fundamental frequencies reside
 * For a transform with the exact number of features, `torchaudio` transform has ~1.5x as many features from 1khz and up
 * But if we're willing to spend a few more features, an optimized `MusicalMelTransform` with passthrough @ 5khz to let the FFT bins come through "covers" the torchaudio mel transform pretty much everywhere!
 
-> ⚠️ It's important to remember all mel features are derivative of the FFT! If you're working with an FFT of size 128 or whatever, this package won't work miracles! Your resolution on low end will still be shit. I wouldn't use this package below FFT size of 512, tbh. But by cleverly assigning those FFT bins you do have, this package is a way to "stretch" the resolution you do have to make discrimination on the low end easier. And as frequency rises, the features you'll get will be at western musical notes.
+> ⚠️ It's important to remember all mel features are derivative of the FFT! If you're working with an FFT of size 128 or whatever, this package won't work miracles! Your resolution on low end will still be shit. I wouldn't use this package below FFT size of 512, tbh. But by cleverly assigning those FFT bins you do have, this package is a way to "stretch" the resolution you do have to make discrimination on the low end easier via smoothing interpolation. And as frequency rises, the features you'll get will be at western musical notes.
 
 ### ONNX Compatibility
 
@@ -171,7 +171,7 @@ class SimpleAudioClassifier(nn.Module):
             # if "mel", then elementwise multiply is after.
             # If None, then no reweighting is done and this transform has
             # no learnable parameters at all!
-            learnable_weights="mel",
+            learnable_weights="fft",
 
             # which power to raise magnitudes to. 1 is mag, 2 is power, etc
             power=2,
