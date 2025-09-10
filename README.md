@@ -83,9 +83,9 @@ MusicalMelTransform(
     sample_rate=44100,            # Audio sample rate
     frame_size=2048,              # FFT size
     interval=1.0,                 # Musical interval in semitones
-    f_min=80,                     # Minimum frequency (Hz)
-    f_max=8_000,                  # Maximum frequency (Hz)
-    passthrough_cutoff_hz=10_000, # High-freq passthrough threshold
+    f_min=None,                   # Minimum frequency (Hz)
+    f_max=10_000,                 # Maximum frequency (Hz)
+    passthrough_cutoff_hz=8_000,  # High-freq passthrough threshold
     norm=True,                    # Normalize filterbank
     min_bins=2,                   # Minimum filter width
     adaptive=True,                # Adaptive filter sizing
