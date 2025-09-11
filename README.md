@@ -17,6 +17,8 @@ If you've ever wanted features in torch from an audio signal that directly repre
 
 Here, I show a few mel filters (the notes in the legend). Each gets some weight from neighboring FFT bins in such a way where the position between the FFT bins affects the weighting of the resulting mel bin so that a neural network can differentiate mel bin musical notes from one another.
 
+📝 [Learn more about this project with my blog post here](https://willdrevo.com/2025/09/09/introducing-a-musical-mel-transform-in-pytorch/)!
+
 ## What is this and why use it?
 
 All mel scales in torchaudio, librosa, or other packages are also logarithmically spaced bins on the frequency spectrum, but:
