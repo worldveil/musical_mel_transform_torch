@@ -4,7 +4,7 @@ This package provides efficient, ONNX-compatible implementations of mel-frequenc
 optimized for musical audio analysis and processing.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Will Drevo"
 __email__ = "will.drevo+github@gmail.com"
 
