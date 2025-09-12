@@ -11,11 +11,11 @@ pip install musical-mel-transform
 
 A PyTorch-based musical mel-frequency transform for audio processing, optimized for performance and ONNX compatibility.
 
-If you've ever wanted features in torch from an audio signal that directly represent semitones (or quarter tones!) this is the package for you.
+If you've ever wanted audio features that directly represent semitones (or quarter tones!) this is the package for you.
 
 ![Musical Mel Transform Filterbank](img/low_freq_filters.png)
 
-Here, I show a few mel filters (the notes in the legend). Each gets some weight from neighboring FFT bins in such a way where the position between the FFT bins affects the weighting of the resulting mel bin so that a neural network can differentiate mel bin musical notes from one another.
+Here, I show a few mel filters (the notes in the legend). Each pitch is interpolated from neighboring FFT bins so that a neural network can more easily differentiate mel bin musical notes from one another.
 
 📝 [Learn more about this project with my blog post here](https://willdrevo.com/2025/09/09/introducing-a-musical-mel-transform-in-pytorch/)!
 
@@ -35,7 +35,7 @@ This package aims to alleviate these issues!
 * If your case is realtime or you just need the speed that FFT-based methods provide (vs say, a CQT that would do well on low frequencies but is slow)
 * If you're comparing against a completely learned filterbank, or that approach isn't working
 
-Personally I have found this `MusicalMelTransform` (with learnable_weights="mel" to reweight for loudness) beats all the above for most of my realtime usecases.
+Personally I have found this `MusicalMelTransform` (with `learnable_weights="fft"` to learn to re-weight the original FFT bins) beats all the above for most of my realtime usecases.
 
 ## How does it work?
 
@@ -49,11 +49,11 @@ Here's a quick comparison between:
 2. `torchaudio` mel scale transform
 3. `MusicalMelTransform` (this repo)
 
-I have constrained the two mel transforms (2 & 3) to have the same dimensionality, and be capturing up to 16khz to make the comparison fair.
+I have constrained the two mel transforms (2 & 3) to have the same dimensionality and be capturing up to 16khz to make the comparison fair.
 
 ![Linear FFT vs torchaudio melscale vs musical mel transform](img/spectrogram_comparison.png)
 
-As you can see, especially in the lower frequencies, the resolution of `MusicalMelTransform` is much, much better! This is great for music, and especially for low-frequency heavy music like today's pop and electronic music. The graph here shows a kick pattern, typical in house or techno music. 
+As you can see, especially in the low frequencies, the resolution of `MusicalMelTransform` is much, much better! This is great for music, and especially for low-frequency heavy music like today's pop and electronic music. The graph here shows a kick pattern, typical in house or techno music. 
 
 Looking at the resulting features across different musically-relevant frequency ranges, we can see how different transforms vary:
 
@@ -67,11 +67,15 @@ As you can see:
 * For a transform with the exact number of features, `torchaudio` transform has ~1.5x as many features from 1khz and up
 * But if we're willing to spend a few more features, an optimized `MusicalMelTransform` with passthrough @ 5khz to let the FFT bins come through "covers" the torchaudio mel transform pretty much everywhere!
 
-> ⚠️ It's important to remember all mel features are derivative of the FFT! If you're working with an FFT of size 128 or whatever, this package won't work miracles! Your resolution on low end will still be shit. I wouldn't use this package below FFT size of 512, tbh. But by cleverly assigning those FFT bins you do have, this package is a way to "stretch" the resolution you do have to make discrimination on the low end easier via smoothing interpolation. And as frequency rises, the features you'll get will be at western musical notes.
+> ⚠️ It's important to remember all musical mel pitch features are derivative of the FFT! If you're working with an FFT of size 128 or whatever, this package won't work miracles. Your resolution on low end will still be shit. I wouldn't use this package below FFT size of 512, tbh. But by cleverly assigning those FFT bins you do have, this package is a way to "stretch" the resolution you do have to make discrimination on the low end easier via smoothing interpolation.
 
 ### ONNX Compatibility
 
-`MusicalMelTransform` also uses a nice [convolutional FFT](src/musical_mel_transform/conv_fft.py) to apply the FFT in a way that is ONNX export compatible, if that is important to you. If not, just stick with the torch native FFT - it is faster.
+`MusicalMelTransform` can optionally use a nice [convolutional FFT](src/musical_mel_transform/conv_fft.py) to apply the FFT in a way that is ONNX export compatible (`use_conv_fft=True`), if that is important to you. 
+
+If not, just stick with the torch native FFT - it is faster. See the performance section below or run the demo to calculate the performance hit for your system. 
+
+Note that you will see a speed up in other parts of your network by running in ONNX, so taking the hit on a convolutional FFT vs native FFT might be totally okay because the rest of your network savings are substantial just by virtue of doing inference in C++/ONNX. 
 
 ## Usage example
 
