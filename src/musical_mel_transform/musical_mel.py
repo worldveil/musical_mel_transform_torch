@@ -89,6 +89,9 @@ class MusicalMelTransform(nn.Module):
         self.power = power
         self.to_db = to_db
 
+        # Ensure TorchScript sees this attribute regardless of branch
+        self.conv_fft: Optional[ConvFFT] = None
+
         bw = sample_rate / frame_size
         bin_freqs = np.fft.rfftfreq(frame_size, 1 / sample_rate).astype(np.float64)
         left_edge = bin_freqs - 0.5 * bw
@@ -225,7 +228,7 @@ class MusicalMelTransform(nn.Module):
         fft_mag  : [B, n_fft/2 + 1]      – linear-FFT magnitudes
         """
         windowed_frames = frames * self.window
-        if self.use_conv_fft:
+        if self.conv_fft is not None:
             _, _, mag, _ = self.conv_fft.transform(windowed_frames.unsqueeze(1))
             mag = mag.squeeze(
                 1
