@@ -13,6 +13,7 @@ import torchaudio
 
 from .conv_fft import ConvFFT
 
+EPS = 1e-7
 
 # ──────────────────────────────────────────────────────────────────────────
 #  helper – label each frequency with a unique note name (± cents)
@@ -173,7 +174,7 @@ class MusicalMelTransform(nn.Module):
 
         # normalize if needed
         if norm:
-            B /= B.sum(axis=0, keepdims=True) + 1e-12
+            B /= B.sum(axis=0, keepdims=True) + EPS
 
         # check for negative weights or empty filters
         assert (B.sum(axis=0) == 0).sum() == 0, "Some filters have no weight"
@@ -253,14 +254,14 @@ class MusicalMelTransform(nn.Module):
             mel = torchaudio.functional.amplitude_to_DB(
                 mel,
                 multiplier=multiplier,
-                amin=1e-10,
+                amin=EPS,
                 db_multiplier=0.0,
                 top_db=None,
             )
             power = torchaudio.functional.amplitude_to_DB(
                 power,
                 multiplier=multiplier,
-                amin=1e-10,
+                amin=EPS,
                 db_multiplier=0.0,
                 top_db=None,
             )
