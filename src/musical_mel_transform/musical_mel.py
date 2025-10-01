@@ -10,10 +10,10 @@ import onnxruntime
 import torch
 import torch.nn as nn
 import torchaudio
+import torch.amp as amp
 
 from .conv_fft import ConvFFT
 
-EPS = 1e-7
 
 # ──────────────────────────────────────────────────────────────────────────
 #  helper – label each frequency with a unique note name (± cents)
@@ -174,7 +174,7 @@ class MusicalMelTransform(nn.Module):
 
         # normalize if needed
         if norm:
-            B /= B.sum(axis=0, keepdims=True) + EPS
+            B /= B.sum(axis=0, keepdims=True) + 1e-12
 
         # check for negative weights or empty filters
         assert (B.sum(axis=0) == 0).sum() == 0, "Some filters have no weight"
@@ -243,7 +243,11 @@ class MusicalMelTransform(nn.Module):
         if self.learnable_weights == "fft":
             power *= self.learnable_weights_param
 
-        mel = power @ self.mel_basis
+        if power.is_cuda:
+            with amp.autocast("cuda", enabled=False):
+                mel = power @ self.mel_basis
+        else:
+            mel = power @ self.mel_basis
 
         if self.learnable_weights == "mel":
             mel *= self.learnable_weights_param
@@ -251,21 +255,21 @@ class MusicalMelTransform(nn.Module):
         # Optional dB conversion
         if self.to_db:
             multiplier = 20.0 if self.power == 1 else 10.0
+            amin = float(torch.finfo(mel.dtype).tiny)
             mel = torchaudio.functional.amplitude_to_DB(
                 mel,
                 multiplier=multiplier,
-                amin=EPS,
+                amin=amin,
                 db_multiplier=0.0,
                 top_db=None,
             )
             power = torchaudio.functional.amplitude_to_DB(
                 power,
                 multiplier=multiplier,
-                amin=EPS,
+                amin=amin,
                 db_multiplier=0.0,
                 top_db=None,
             )
-
         return mel, power
 
 
