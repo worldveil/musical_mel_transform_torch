@@ -9,11 +9,12 @@ __author__ = "Will Drevo"
 __email__ = "will.drevo+github@gmail.com"
 
 from .conv_fft import ConvFFT
-from .musical_mel import MusicalMelTransform, convert_to_onnx, plot_low_filters
+from .musical_mel import MusicalMelTransform, PostTransformType, convert_to_onnx, plot_low_filters
 
 __all__ = [
     "ConvFFT",
     "MusicalMelTransform",
+    "PostTransformType",
     "convert_to_onnx",
     "plot_low_filters",
 ]

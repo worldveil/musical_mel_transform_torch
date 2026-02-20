@@ -138,8 +138,8 @@ def benchmark_mel_transform(
         signal = torch.randn(1, frame_size, device=device)
 
         with torch.no_grad():
-            _ = torch_transform(signal)
-            _ = conv_transform(signal)
+            _ = torch_transform.forward_frame(signal)
+            _ = conv_transform.forward_frame(signal)
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -156,7 +156,7 @@ def benchmark_mel_transform(
         start_time = time.perf_counter()
 
         with torch.no_grad():
-            torch_mel, torch_fft = torch_transform(signal)
+            torch_mel, torch_fft = torch_transform.forward_frame(signal)
 
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -168,7 +168,7 @@ def benchmark_mel_transform(
         start_time = time.perf_counter()
 
         with torch.no_grad():
-            conv_mel, conv_fft = conv_transform(signal)
+            conv_mel, conv_fft = conv_transform.forward_frame(signal)
 
         if torch.cuda.is_available():
             torch.cuda.synchronize()

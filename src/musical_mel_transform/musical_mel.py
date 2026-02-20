@@ -1,6 +1,6 @@
 import math
 import time
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 import librosa
 import matplotlib.pyplot as plt
@@ -9,10 +9,14 @@ import onnx
 import onnxruntime
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchaudio
 import torch.amp as amp
 
 from .conv_fft import ConvFFT
+
+
+PostTransformType = Literal["db", "log", "log1p", None]
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -38,21 +42,26 @@ class MusicalMelTransform(nn.Module):
     interval    : float    – step in *semitones* (1.0=semitone, 0.5=quarter-tone…)
     f_min       : float    – lowest note centre
     f_max       : float    – analysis ceiling (default Nyquist)
-    cutoff_hz   : float    – above this add identity columns
+    passthrough_cutoff_hz : float – above this add identity columns
     norm        : bool     – L¹-normalise every column
     min_bins    : int      – widen triangles so each spans ≥ this many FFT bins
     adaptive    : bool     – adapt filter width to distance from nearest FFT-bin center
     passthrough_grouping_size: int – group this many consecutive pass-through high-frequency bins
     power       : int      – power exponent (1 → magnitude, 2 → power, etc.)
-    to_db       : bool     – convert to dB (amplitude vs. power)
+    post_transform_type : str | None – "db", "log", "log1p", or None (raw)
+    hop_size    : int | None – required for waveform-mode forward(); None = frame-only
+    center      : bool     – pad waveform for centered frames in forward()
+    window_periodic : bool – True = periodic window (STFT convention), False = symmetric
     """
+
+    LOG_EPS = 1e-5
 
     def __init__(
         self,
         sample_rate: int = 44_100,
         frame_size: int = 1_024,
         interval: float = 1.0,
-        f_min: Optional[float] = None,  # Changed to Optional
+        f_min: Optional[float] = None,
         f_max: Optional[float] = None,
         passthrough_cutoff_hz: float = 20_000,
         norm: bool = True,
@@ -63,7 +72,10 @@ class MusicalMelTransform(nn.Module):
         window_type: str = None,
         learnable_weights: str = None,  # None, "fft", "mel"
         power: int = 2,
-        to_db: bool = True,
+        post_transform_type: Optional[PostTransformType] = None,
+        hop_size: Optional[int] = None,
+        center: bool = True,
+        window_periodic: bool = True,
     ):
         super().__init__()
 
@@ -88,7 +100,10 @@ class MusicalMelTransform(nn.Module):
         self.dtype = torch.float
         self.learnable_weights = learnable_weights
         self.power = power
-        self.to_db = to_db
+        self.post_transform_type = post_transform_type
+        self.hop_size = hop_size
+        self.center = center
+        self.window_periodic = window_periodic
 
         # Ensure TorchScript sees this attribute regardless of branch
         self.conv_fft: Optional[ConvFFT] = None
@@ -197,9 +212,9 @@ class MusicalMelTransform(nn.Module):
 
         # Create window for windowing the input frames
         if window_type == "hann":
-            window = torch.hann_window(frame_size, dtype=self.dtype, periodic=False)
+            window = torch.hann_window(frame_size, dtype=self.dtype, periodic=window_periodic)
         elif window_type == "hamming":
-            window = torch.hamming_window(frame_size, dtype=self.dtype)
+            window = torch.hamming_window(frame_size, dtype=self.dtype, periodic=window_periodic)
         else:
             # no windowing
             window = torch.ones(frame_size, dtype=self.dtype)
@@ -219,58 +234,97 @@ class MusicalMelTransform(nn.Module):
         else:
             self.learnable_weights_param = None
 
-    # ───────────────────────── forward (ONNX-safe) ──────────────────────────
-    def forward(self, frames: torch.Tensor):
+    # ───────────────────────── post-transform helper ───────────────────────
+    def _apply_post_transform(self, x: torch.Tensor) -> torch.Tensor:
+        if self.post_transform_type == "db":
+            multiplier = 20.0 if self.power == 1 else 10.0
+            amin = float(torch.finfo(x.dtype).tiny)
+            return torchaudio.functional.amplitude_to_DB(
+                x,
+                multiplier=multiplier,
+                amin=amin,
+                db_multiplier=0.0,
+                top_db=None,
+            )
+        elif self.post_transform_type == "log":
+            return torch.log(x + self.LOG_EPS)
+        elif self.post_transform_type == "log1p":
+            return torch.log1p(x)
+        return x
+
+    # ───────────────────── forward_frame (ONNX-safe) ─────────────────────
+    def forward_frame(self, frames: torch.Tensor):
         """
+        Frame-level processing (the original forward() interface).
+
         frames : [B, frame_size]  – time-domain window
         Returns
         -------
-        mel      : [B, n_mel]            – musical-mel magnitudes
-        fft_mag  : [B, n_fft/2 + 1]      – linear-FFT magnitudes
+        mel      : [B, n_mel]            – musical-mel features
+        fft_power: [B, n_fft/2 + 1]      – linear-FFT power
         """
         windowed_frames = frames * self.window
         if self.conv_fft is not None:
             _, _, mag, _ = self.conv_fft.transform(windowed_frames.unsqueeze(1))
-            mag = mag.squeeze(
-                1
-            )  # Remove channel dimension: [B, 1, n_fft//2+1] -> [B, n_fft//2+1]
+            mag = mag.squeeze(1)
         else:
             mag = torch.abs(torch.fft.rfft(windowed_frames, n=self.window.numel()))
 
-        # Apply power exponent if requested (power=1 → magnitude, 2 → power, etc.)
-        power = mag ** self.power
+        fft_power = mag ** self.power
 
         if self.learnable_weights == "fft":
-            power *= self.learnable_weights_param
+            fft_power = fft_power * self.learnable_weights_param
 
-        if power.is_cuda:
+        if fft_power.is_cuda:
             with amp.autocast("cuda", enabled=False):
-                mel = power @ self.mel_basis
+                mel = fft_power @ self.mel_basis
         else:
-            mel = power @ self.mel_basis
+            mel = fft_power @ self.mel_basis
 
         if self.learnable_weights == "mel":
-            mel *= self.learnable_weights_param
+            mel = mel * self.learnable_weights_param
 
-        # Optional dB conversion
-        if self.to_db:
-            multiplier = 20.0 if self.power == 1 else 10.0
-            amin = float(torch.finfo(mel.dtype).tiny)
-            mel = torchaudio.functional.amplitude_to_DB(
-                mel,
-                multiplier=multiplier,
-                amin=amin,
-                db_multiplier=0.0,
-                top_db=None,
+        mel = self._apply_post_transform(mel)
+        fft_power = self._apply_post_transform(fft_power)
+        return mel, fft_power
+
+    # ───────────────────── forward (waveform mode) ───────────────────────
+    def forward(self, waveform: torch.Tensor) -> torch.Tensor:
+        """
+        Waveform-level processing. Drop-in replacement for MelSpectrogramScaled.
+
+        Requires hop_size to be set at construction time.
+
+        waveform : [B, num_samples] or [num_samples]
+        Returns
+        -------
+        mel : [B, n_mel, num_frames]  (batch dim added if input was 1D)
+        """
+        if self.hop_size is None:
+            raise RuntimeError(
+                "MusicalMelTransform.forward() requires hop_size to be set. "
+                "Use forward_frame() for frame-level processing, or pass "
+                "hop_size= to the constructor for waveform mode."
             )
-            power = torchaudio.functional.amplitude_to_DB(
-                power,
-                multiplier=multiplier,
-                amin=amin,
-                db_multiplier=0.0,
-                top_db=None,
-            )
-        return mel, power
+
+        squeezed = waveform.dim() == 1
+        if squeezed:
+            waveform = waveform.unsqueeze(0)
+
+        if self.center:
+            pad_amount = self.frame_size // 2
+            waveform = F.pad(waveform, (pad_amount, pad_amount))
+
+        # [B, num_frames, frame_size]
+        frames = waveform.unfold(1, self.frame_size, self.hop_size)
+        batch_size, num_frames, _ = frames.shape
+
+        flat_frames = frames.reshape(batch_size * num_frames, self.frame_size)
+        mel, _ = self.forward_frame(flat_frames)
+
+        mel = mel.reshape(batch_size, num_frames, self.n_mel)
+        mel = mel.permute(0, 2, 1)
+        return mel
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -328,14 +382,25 @@ def plot_low_filters(
     plt.show()
 
 
+class _FrameLevelWrapper(nn.Module):
+    """Thin wrapper that routes forward() to forward_frame() for ONNX export."""
+
+    def __init__(self, bank: MusicalMelTransform):
+        super().__init__()
+        self.bank = bank
+
+    def forward(self, frames: torch.Tensor):
+        return self.bank.forward_frame(frames)
+
+
 def convert_to_onnx(
     bank: MusicalMelTransform,
     onnx_model_save_path: str,
-    opset: int = 18,  # Changed from 19
+    opset: int = 18,
     dynamic_batch: bool = True,
 ):
     """
-    Convert the bank to an ONNX model.
+    Convert the bank to an ONNX model (frame-level export).
 
     Args:
         bank: MusicalMelTransform instance to convert
@@ -343,7 +408,10 @@ def convert_to_onnx(
         opset: ONNX opset version to use
         dynamic_batch: If True, export with dynamic batch size. If False, fixed batch size = 1.
     """
-    use_dynamo = bank.use_conv_fft  # cannot use dynamo with torch.fft native!!!
+    wrapper = _FrameLevelWrapper(bank)
+    wrapper.eval()
+
+    use_dynamo = bank.use_conv_fft
     dummy_frames = torch.randn(1, bank.frame_size)
 
     batch_info = "dynamic batch" if dynamic_batch else "fixed batch=1"
@@ -352,12 +420,11 @@ def convert_to_onnx(
     )
 
     if use_dynamo and dynamic_batch:
-        # Use dynamic_shapes for dynamo=True
         dynamic_shapes = {
             "frames": (None, bank.frame_size)
-        }  # (batch_size, frame_size) where batch_size is dynamic
+        }
         torch.onnx.export(
-            bank,
+            wrapper,
             (dummy_frames,),
             onnx_model_save_path,
             export_params=True,
@@ -370,21 +437,18 @@ def convert_to_onnx(
             dynamo=use_dynamo,
         )
     else:
-        # Use dynamic_axes for dynamo=False or fixed batch size
         dynamic_axes = (
             {
-                "frames": {0: "batch_size"},  # Dynamic batch dimension for input
-                "mel": {0: "batch_size"},  # Dynamic batch dimension for mel output
-                "fft_mag": {
-                    0: "batch_size"
-                },  # Dynamic batch dimension for fft_mag output
+                "frames": {0: "batch_size"},
+                "mel": {0: "batch_size"},
+                "fft_mag": {0: "batch_size"},
             }
             if dynamic_batch
             else None
         )
 
         torch.onnx.export(
-            bank,
+            wrapper,
             (dummy_frames,),
             onnx_model_save_path,
             export_params=True,

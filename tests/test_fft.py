@@ -186,12 +186,12 @@ def test_exact_mel_transform_matches_torch_rfft():
 
         # Timing Torch Mel Transform (use_conv_fft=False)
         start_time = time.time()
-        torch_mel_output, torch_fft_mag = torch_mel_transform(signal.squeeze(1))
+        torch_mel_output, torch_fft_mag = torch_mel_transform.forward_frame(signal.squeeze(1))
         torch_mel_times.append((time.time() - start_time) * 1000)  # Convert to ms
 
         # Timing Conv Mel Transform (use_conv_fft=True)
         start_time = time.time()
-        conv_mel_output, conv_fft_mag = conv_mel_transform(signal.squeeze(1))
+        conv_mel_output, conv_fft_mag = conv_mel_transform.forward_frame(signal.squeeze(1))
         conv_mel_times.append((time.time() - start_time) * 1000)  # Convert to ms
 
         # Debugging prints

@@ -81,11 +81,13 @@ Note that you will see a speed up in other parts of your network by running in O
 
 ### MusicalMelTransform
 
+#### Frame-level processing (`forward_frame`)
+
 ```python
 import torch
 from musical_mel_transform import MusicalMelTransform
 
-MusicalMelTransform(
+mel_transform = MusicalMelTransform(
     sample_rate=44100,            # Audio sample rate
     frame_size=2048,              # FFT size
     interval=1.0,                 # Musical interval in semitones
@@ -97,13 +99,32 @@ MusicalMelTransform(
     adaptive=True,                # Adaptive filter sizing
     passthrough_grouping_size=3,  # High-freq bin grouping
     use_conv_fft=True,            # Use convolution-based FFT
-    learnable_weights="mel"       # What kind, if any, of learnable weights to use
+    learnable_weights="mel",      # What kind, if any, of learnable weights to use
     power=2,                      # which power to raise output to
-    to_db=True                    # convert to dB scale?
+    post_transform_type="db",     # "db", "log", "log1p", or None (raw)
 )
 batch_size, frame_size = 4, 2048
 audio_frames = torch.randn(batch_size, frame_size)
-mel_feats, fft_mag_feats = mel_transform(audio_fraames)
+mel_feats, fft_power = mel_transform.forward_frame(audio_frames)
+```
+
+#### Waveform-level processing (`forward`)
+
+```python
+import torch
+from musical_mel_transform import MusicalMelTransform
+
+mel_transform = MusicalMelTransform(
+    sample_rate=44100,
+    frame_size=2048,
+    hop_size=512,                 # Required for waveform mode
+    center=True,                  # Pad waveform for centered frames
+    window_type="hann",
+    window_periodic=True,         # Periodic window (STFT convention)
+    post_transform_type="log",    # log(x + eps) scaling
+)
+waveform = torch.randn(1, 44100)   # [B, num_samples]
+mel = mel_transform(waveform)       # [B, n_mel, num_frames]
 ```
 
 ## Quickstart in a toy torch network
@@ -115,7 +136,7 @@ from musical_mel_transform import MusicalMelTransform
 
 class SimpleAudioClassifier(nn.Module):
     """Simple audio classifier using musical mel features"""
-    def __init__(self, frame_size: int, n_classes: int = 10):
+    def __init__(self, n_classes: int = 10):
         super().__init__()
 
         self.mel_transform = MusicalMelTransform(
@@ -123,8 +144,15 @@ class SimpleAudioClassifier(nn.Module):
             sample_rate=44100,
 
             # number of samples to include / the size of the FFT
-            # by default a hann window is applied as well
-            frame_size=frame_size,
+            frame_size=2048,
+
+            # hop size and center are required for waveform-level forward()
+            hop_size=512,
+            center=True,
+
+            # periodic hann window (matches torchaudio STFT convention)
+            window_type="hann",
+            window_periodic=True,
 
             # interval in semitones at which to place a mel bin
             interval=0.5,  # quarter tone resolution
@@ -182,11 +210,12 @@ class SimpleAudioClassifier(nn.Module):
             # which power to raise magnitudes to. 1 is mag, 2 is power, etc
             power=2,
 
-            # should we put this into dB scale?
-            to_db=True,
+            # post transform type: "db", "log", "log1p", or None (raw)
+            post_transform_type="log",
         )
 
-        # Simple classifier head
+        # Simple classifier head (pool over time, then classify)
+        self.pool = nn.AdaptiveAvgPool1d(1)
         self.classifier = nn.Sequential(
             nn.Linear(self.mel_transform.n_mel, 128),
             nn.ReLU(),
@@ -194,36 +223,36 @@ class SimpleAudioClassifier(nn.Module):
             nn.Linear(128, n_classes)
         )
 
-    def forward(self, audio_frame):
+    def forward(self, waveform):
         """
         Args:
-            audio_frame: [batch_size, frame_size] - frames of audio
+            waveform: [batch_size, num_samples] - raw audio waveform
         Returns:
             logits: [batch_size, n_classes] - Classification scores
         """
-        mel_features, _ = self.mel_transform(audio_frame)
-        return self.classifier(mel_features)
+        mel = self.mel_transform(waveform)       # [B, n_mel, T]
+        pooled = self.pool(mel).squeeze(-1)      # [B, n_mel]
+        return self.classifier(pooled)
 
 # Example usage
-model = SimpleAudioClassifier(n_classes=10, frame_size=2048)
+model = SimpleAudioClassifier(n_classes=10)
 
-# Process a batch of audio frames
+# Process a batch of 1-second audio clips
 batch_size = 4
-frame_size = 2048
-audio_frames = torch.randn(batch_size, frame_size)
+waveform = torch.randn(batch_size, 44100)
 
 with torch.no_grad():
-    predictions = model(audio_frames)
+    predictions = model(waveform)
     print(f"Predictions shape: {predictions.shape}")  # [4, 10]
 
 # Export to ONNX
 torch.onnx.export(
     model,
-    audio_frames,
+    waveform,
     "audio_classifier.onnx",
     export_params=True,
     opset_version=18,
-    input_names=['audio_frame'],
+    input_names=['waveform'],
     output_names=['predictions'],
     dynamic_axes=None,  # I recommend this for best performance
 )
@@ -234,10 +263,22 @@ print("Model exported to audio_classifier.onnx")
 
 ```bash
 pip install musical-mel-transform
+```
 
-# or editable install
-cd musical_mel_transform/
+### Development Setup
+
+```bash
+cd musical_mel_transform_torch/
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e .
+```
+
+### Running Tests
+
+```bash
+source .venv/bin/activate
+pytest tests/ -v
 ```
 
 ### Different Musical Scales
@@ -372,22 +413,38 @@ python -m pip install musical-mel-transform
 
 ```python
 MusicalMelTransform(
-    sample_rate: int = 44100,           # Audio sample rate
-    frame_size: int = 2048,             # FFT size
-    interval: float = 1.0,              # Musical interval in semitones
-    f_min: float = 80.0,                # Minimum frequency (Hz)
-    f_max: Optional[float] = None,      # Maximum frequency (Hz)
-    passthrough_cutoff_hz: float = 10000, # High-freq passthrough threshold
-    norm: bool = True,                  # Normalize filterbank
-    min_bins: int = 2,                  # Minimum filter width
-    adaptive: bool = True,              # Adaptive filter sizing
-    passthrough_grouping_size: int = 3, # High-freq bin grouping
-    use_conv_fft: bool = False,         # Use convolution-based FFT
-    learnable_weights: str = None       # What kind, if any, of learnable weights to use
-    power=2,                            # which power to raise output to
-    to_db=True                          # convert to dB scale?
+    sample_rate: int = 44100,              # Audio sample rate
+    frame_size: int = 2048,                # FFT size / window length
+    interval: float = 1.0,                 # Musical interval in semitones
+    f_min: Optional[float] = None,         # Minimum frequency (Hz), default A0
+    f_max: Optional[float] = None,         # Maximum frequency (Hz), default Nyquist
+    passthrough_cutoff_hz: float = 20000,  # High-freq passthrough threshold
+    norm: bool = True,                     # L1-normalize filterbank columns
+    min_bins: int = 2,                     # Minimum filter width in FFT bins
+    adaptive: bool = True,                 # Adaptive filter sizing
+    passthrough_grouping_size: int = 3,    # High-freq bin grouping
+    use_conv_fft: bool = False,            # Use ONNX-compatible convolutional FFT
+    window_type: str = None,               # "hann", "hamming", or None (rectangular)
+    learnable_weights: str = None,         # None, "fft", or "mel"
+    power: int = 2,                        # Power exponent (1=magnitude, 2=power)
+    post_transform_type: str = None,       # "db", "log", "log1p", or None (raw)
+    hop_size: Optional[int] = None,        # Hop size for waveform mode forward()
+    center: bool = True,                   # Pad waveform for centered frames
+    window_periodic: bool = True,          # True=periodic (STFT), False=symmetric
 )
 ```
+
+#### Methods
+
+- **`forward(waveform) -> [B, n_mel, num_frames]`**: Waveform-level processing. Requires `hop_size` to be set. Drop-in replacement for `torchaudio.transforms.MelSpectrogram`.
+- **`forward_frame(frames) -> (mel, fft_power)`**: Frame-level processing. `frames` is `[B, frame_size]`, returns `mel [B, n_mel]` and `fft_power [B, n_fft//2+1]`.
+
+#### Attributes
+
+- **`n_mel`**: Number of mel bins in the output.
+- **`mel_basis`**: The filterbank matrix `[n_fft//2+1, n_mel]`.
+- **`mel_freqs`**: Center frequencies of each mel bin.
+- **`note_names`**: Human-readable note names for each mel bin.
 
 ### ConvFFT
 

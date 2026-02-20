@@ -99,7 +99,7 @@ def demo_basic_usage():
 
     # Transform
     with torch.no_grad():
-        mel_spec, fft_mag = transform(frames)
+        mel_spec, fft_mag = transform.forward_frame(frames)
 
     print(f"Input shape: {frames.shape}")
     print(f"Mel spectrogram shape: {mel_spec.shape}")
@@ -140,7 +140,7 @@ def demo_parameter_comparison():
         )
 
         with torch.no_grad():
-            mel_spec, _ = transform(frames)
+            mel_spec, _ = transform.forward_frame(frames)
 
         # Plot
         mel_freqs = transform.mel_freqs.cpu().numpy()
@@ -255,15 +255,15 @@ def demo_performance_comparison():
         # Warm up
         with torch.no_grad():
             for _ in range(10):
-                transform_conv(frames)
-                transform_torch(frames)
+                transform_conv.forward_frame(frames)
+                transform_torch.forward_frame(frames)
 
         # Benchmark Conv FFT
         conv_times = []
         with torch.no_grad():
             for _ in range(n_iterations):
                 start = time.time()
-                transform_conv(frames)
+                transform_conv.forward_frame(frames)
                 conv_times.append((time.time() - start) * 1000)
 
         # Benchmark Torch FFT
@@ -271,7 +271,7 @@ def demo_performance_comparison():
         with torch.no_grad():
             for _ in range(n_iterations):
                 start = time.time()
-                transform_torch(frames)
+                transform_torch.forward_frame(frames)
                 torch_times.append((time.time() - start) * 1000)
 
         conv_avg = np.mean(conv_times)
@@ -340,7 +340,7 @@ def demo_musical_analysis():
         frames = torch.from_numpy(signal.astype(np.float32)).unsqueeze(0)
 
         with torch.no_grad():
-            mel_spec, _ = transform(frames)
+            mel_spec, _ = transform.forward_frame(frames)
 
         mel_freqs = transform.mel_freqs.cpu().numpy()
         mel_values = mel_spec.squeeze().cpu().numpy()
@@ -439,7 +439,7 @@ def demo_plot_spectrums(audio: str, top_freq: float):
         frames = torch.from_numpy(frame.astype(np.float32)).unsqueeze(0)
 
         with torch.no_grad():
-            musical_mel, fft_mag = transform(frames)
+            musical_mel, fft_mag = transform.forward_frame(frames)
 
         # Linear FFT up to x_max_hz (use index via searchsorted for exact alignment)
         k_top_lin = int(np.searchsorted(fft_freqs, x_max_hz, side="right"))
@@ -523,7 +523,7 @@ def demo_plot_spectrogram_comparison(audio: str, top_freq: float, segment_second
         use_conv_fft=False,
         window_type="hann",
         power=2,
-        to_db=False,
+        post_transform_type=None,
     )
     f_low = float(transform.f_min)
     # Match torchaudio mel bin count to total Musical Mel bins
@@ -611,7 +611,7 @@ def demo_plot_spectrogram_comparison(audio: str, top_freq: float, segment_second
         frames = torch.from_numpy(frames_np.astype(np.float32))
 
         with torch.no_grad():
-            mel_amp, fft_amp = transform(frames)
+            mel_amp, fft_amp = transform.forward_frame(frames)
 
         # Prepare spectrograms
         # Linear FFT power -> dB

@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 import torch
+import torchaudio
 
 from musical_mel_transform.musical_mel import MusicalMelTransform
 
@@ -52,7 +53,7 @@ class TestMusicalMelTransform:
         test_input = torch.randn(batch_size, transform.frame_size)
 
         with torch.no_grad():
-            mel_spec, fft_mag = transform(test_input)
+            mel_spec, fft_mag = transform.forward_frame(test_input)
 
         # Check shapes
         assert mel_spec.shape[0] == batch_size
@@ -79,8 +80,8 @@ class TestMusicalMelTransform:
         test_input = torch.randn(1, 1024)
 
         with torch.no_grad():
-            torch_mel, torch_fft = torch_transform(test_input)
-            conv_mel, conv_fft = conv_transform(test_input)
+            torch_mel, torch_fft = torch_transform.forward_frame(test_input)
+            conv_mel, conv_fft = conv_transform.forward_frame(test_input)
 
         # Results should be close but not identical due to implementation differences
         torch.testing.assert_close(torch_mel, conv_mel, rtol=1e-3, atol=1e-4)
@@ -101,7 +102,7 @@ class TestMusicalMelTransform:
 
             test_input = torch.randn(1, 1024)
             with torch.no_grad():
-                mel_spec, fft_mag = transform(test_input)
+                mel_spec, fft_mag = transform.forward_frame(test_input)
 
             # Check that we get reasonable outputs
             assert not torch.isnan(mel_spec).any()
@@ -209,7 +210,7 @@ class TestMusicalMelTransform:
         test_input = torch.randn(1, 1024, device=device)
 
         with torch.no_grad():
-            mel_spec, fft_mag = transform(test_input)
+            mel_spec, fft_mag = transform.forward_frame(test_input)
 
         assert mel_spec.device == device
         assert fft_mag.device == device
@@ -219,7 +220,7 @@ class TestMusicalMelTransform:
         transform = MusicalMelTransform(frame_size=1024, use_conv_fft=True)
         test_input = torch.randn(1, 1024, requires_grad=True)
 
-        mel_spec, fft_mag = transform(test_input)
+        mel_spec, fft_mag = transform.forward_frame(test_input)
         loss = mel_spec.sum() + fft_mag.sum()
         loss.backward()
 
@@ -238,7 +239,7 @@ class TestMusicalMelTransform:
         # Forward pass should work normally
         test_input = torch.randn(2, 1024)
         with torch.no_grad():
-            mel_spec, fft_mag = transform(test_input)
+            mel_spec, fft_mag = transform.forward_frame(test_input)
 
         assert mel_spec.shape[0] == 2
         assert fft_mag.shape[0] == 2
@@ -268,7 +269,7 @@ class TestMusicalMelTransform:
         # Forward pass should work
         test_input = torch.randn(2, 1024)
         with torch.no_grad():
-            mel_spec, fft_mag = transform(test_input)
+            mel_spec, fft_mag = transform.forward_frame(test_input)
 
         assert mel_spec.shape[0] == 2
         assert fft_mag.shape[0] == 2
@@ -298,7 +299,7 @@ class TestMusicalMelTransform:
         # Forward pass should work
         test_input = torch.randn(2, 1024)
         with torch.no_grad():
-            mel_spec, fft_mag = transform(test_input)
+            mel_spec, fft_mag = transform.forward_frame(test_input)
 
         assert mel_spec.shape[0] == 2
         assert fft_mag.shape[0] == 2
@@ -306,21 +307,21 @@ class TestMusicalMelTransform:
         assert not torch.isnan(fft_mag).any()
 
     def test_learnable_weights_fft_affects_output(self):
-        """FFT weights with default dB output should add ~+3.01 dB where not floor-limited."""
+        """FFT weights with dB output should add ~+3.01 dB where not floor-limited."""
         transform = MusicalMelTransform(
-            frame_size=1024, learnable_weights="fft", use_conv_fft=True
+            frame_size=1024, learnable_weights="fft", use_conv_fft=True, post_transform_type="db",
         )
 
         test_input = torch.randn(1, 1024)
 
         with torch.no_grad():
-            mel_default, fft_default = transform(test_input)
+            mel_default, fft_default = transform.forward_frame(test_input)
 
         with torch.no_grad():
             transform.learnable_weights_param.data *= 2.0
 
         with torch.no_grad():
-            mel_modified, fft_modified = transform(test_input)
+            mel_modified, fft_modified = transform.forward_frame(test_input)
 
         # Expect +3.010299957 dB for power doubling (power=2 default → 10*log10)
         delta_db_expected = 10.0 * torch.log10(torch.tensor(2.0))
@@ -344,21 +345,21 @@ class TestMusicalMelTransform:
         )
 
     def test_learnable_weights_mel_affects_output(self):
-        """Mel weights with default dB output should subtract ~3.01 dB where not floor-limited."""
+        """Mel weights with dB output should subtract ~3.01 dB where not floor-limited."""
         transform = MusicalMelTransform(
-            frame_size=1024, learnable_weights="mel", use_conv_fft=True
+            frame_size=1024, learnable_weights="mel", use_conv_fft=True, post_transform_type="db",
         )
 
         test_input = torch.randn(1, 1024)
 
         with torch.no_grad():
-            mel_default, fft_default = transform(test_input)
+            mel_default, fft_default = transform.forward_frame(test_input)
 
         with torch.no_grad():
             transform.learnable_weights_param.data *= 0.5
 
         with torch.no_grad():
-            mel_modified, fft_modified = transform(test_input)
+            mel_modified, fft_modified = transform.forward_frame(test_input)
 
         # FFT should be unchanged by mel weights
         torch.testing.assert_close(fft_default, fft_modified, rtol=1e-7, atol=1e-8)
@@ -379,19 +380,19 @@ class TestMusicalMelTransform:
     def test_learnable_weights_fft_affects_output_linear(self):
         """Linear scale: doubling FFT weights doubles outputs."""
         transform = MusicalMelTransform(
-            frame_size=1024, learnable_weights="fft", use_conv_fft=True, to_db=False
+            frame_size=1024, learnable_weights="fft", use_conv_fft=True, post_transform_type=None
         )
 
         test_input = torch.randn(1, 1024)
 
         with torch.no_grad():
-            mel_default, fft_default = transform(test_input)
+            mel_default, fft_default = transform.forward_frame(test_input)
 
         with torch.no_grad():
             transform.learnable_weights_param.data *= 2.0
 
         with torch.no_grad():
-            mel_modified, fft_modified = transform(test_input)
+            mel_modified, fft_modified = transform.forward_frame(test_input)
 
         assert not torch.allclose(fft_default, fft_modified)
         torch.testing.assert_close(fft_modified, fft_default * 2.0, rtol=1e-5, atol=1e-6)
@@ -401,19 +402,19 @@ class TestMusicalMelTransform:
     def test_learnable_weights_mel_affects_output_linear(self):
         """Linear scale: halving mel weights halves mel outputs while FFT unchanged."""
         transform = MusicalMelTransform(
-            frame_size=1024, learnable_weights="mel", use_conv_fft=True, to_db=False
+            frame_size=1024, learnable_weights="mel", use_conv_fft=True, post_transform_type=None
         )
 
         test_input = torch.randn(1, 1024)
 
         with torch.no_grad():
-            mel_default, fft_default = transform(test_input)
+            mel_default, fft_default = transform.forward_frame(test_input)
 
         with torch.no_grad():
             transform.learnable_weights_param.data *= 0.5
 
         with torch.no_grad():
-            mel_modified, fft_modified = transform(test_input)
+            mel_modified, fft_modified = transform.forward_frame(test_input)
 
         torch.testing.assert_close(fft_default, fft_modified, rtol=1e-7, atol=1e-8)
         assert not torch.allclose(mel_default, mel_modified)
@@ -428,7 +429,7 @@ class TestMusicalMelTransform:
 
             test_input = torch.randn(1, 1024, requires_grad=True)
 
-            mel_spec, fft_mag = transform(test_input)
+            mel_spec, fft_mag = transform.forward_frame(test_input)
             loss = mel_spec.sum() + fft_mag.sum()
             loss.backward()
 
@@ -456,7 +457,7 @@ class TestMusicalMelTransform:
             test_input = torch.randn(2, 1024)
 
             with torch.no_grad():
-                mel_spec, fft_mag = transform(test_input)
+                mel_spec, fft_mag = transform.forward_frame(test_input)
 
             assert mel_spec.shape[0] == 2
             assert fft_mag.shape[0] == 2
@@ -486,7 +487,7 @@ class TestMusicalMelTransform:
                 # Test forward pass
                 test_input = torch.randn(1, frame_size)
                 with torch.no_grad():
-                    mel_spec, fft_mag = transform(test_input)
+                    mel_spec, fft_mag = transform.forward_frame(test_input)
 
                 assert not torch.isnan(mel_spec).any()
                 assert not torch.isnan(fft_mag).any()
@@ -521,7 +522,7 @@ class TestMusicalMelTransform:
         frames = torch.from_numpy(signal.astype(np.float32)).unsqueeze(0)
 
         with torch.no_grad():
-            mel_spec, fft_mag = transform(frames)
+            mel_spec, fft_mag = transform.forward_frame(frames)
 
         # Check that we get reasonable activations
         assert mel_spec.max() > 0.1  # Should have significant energy
@@ -560,7 +561,7 @@ class TestMusicalMelTransform:
         test_input = torch.randn(1, 1024)
 
         with torch.no_grad():
-            mel_spec, fft_mag = transform(test_input)
+            mel_spec, fft_mag = transform.forward_frame(test_input)
 
         # Check basic properties
         assert mel_spec.shape[0] == 1  # batch dimension
@@ -601,7 +602,7 @@ class TestMusicalMelTransform:
         test_input = torch.randn(2, frame_size)  # Batch of 2
 
         with torch.no_grad():
-            mel_spec, fft_mag = transform(test_input)
+            mel_spec, fft_mag = transform.forward_frame(test_input)
 
         # Verify output shapes
         assert mel_spec.shape[0] == 2  # batch dimension
@@ -613,3 +614,192 @@ class TestMusicalMelTransform:
         assert not torch.isinf(mel_spec).any()
         assert not torch.isnan(fft_mag).any()
         assert not torch.isinf(fft_mag).any()
+
+
+class TestWaveformMode:
+    """Tests for the waveform-level forward() interface."""
+
+    def test_output_shape(self):
+        """Waveform forward() should return [B, n_mel, num_frames]."""
+        transform = MusicalMelTransform(
+            sample_rate=44100, frame_size=1024, hop_size=512,
+            use_conv_fft=True, window_type="hann",
+        )
+        waveform = torch.randn(2, 44100)
+        with torch.no_grad():
+            mel = transform(waveform)
+        assert mel.dim() == 3
+        assert mel.shape[0] == 2
+        assert mel.shape[1] == transform.n_mel
+
+    def test_center_padding(self):
+        """center=True should produce more frames than center=False."""
+        kwargs = dict(
+            sample_rate=44100, frame_size=1024, hop_size=512,
+            use_conv_fft=True, window_type="hann",
+        )
+        transform_centered = MusicalMelTransform(center=True, **kwargs)
+        transform_uncentered = MusicalMelTransform(center=False, **kwargs)
+        waveform = torch.randn(1, 44100)
+        with torch.no_grad():
+            mel_centered = transform_centered(waveform)
+            mel_uncentered = transform_uncentered(waveform)
+        assert mel_centered.shape[2] > mel_uncentered.shape[2]
+
+    def test_matches_manual_framing(self):
+        """Waveform forward() should match manual unfold + forward_frame()."""
+        transform = MusicalMelTransform(
+            sample_rate=44100, frame_size=1024, hop_size=512,
+            use_conv_fft=True, window_type="hann", center=False,
+            post_transform_type=None,
+        )
+        waveform = torch.randn(1, 10240)
+        with torch.no_grad():
+            mel_waveform = transform(waveform)
+
+        frames = waveform.unfold(1, 1024, 512)
+        flat_frames = frames.reshape(-1, 1024)
+        with torch.no_grad():
+            mel_frames, _ = transform.forward_frame(flat_frames)
+        mel_manual = mel_frames.reshape(1, -1, transform.n_mel).permute(0, 2, 1)
+
+        torch.testing.assert_close(mel_waveform, mel_manual, rtol=1e-5, atol=1e-6)
+
+    def test_log_post_transform(self):
+        """Waveform forward() with post_transform_type='log' should apply log scaling."""
+        transform_log = MusicalMelTransform(
+            sample_rate=44100, frame_size=1024, hop_size=512,
+            use_conv_fft=True, window_type="hann",
+            post_transform_type="log",
+        )
+        transform_raw = MusicalMelTransform(
+            sample_rate=44100, frame_size=1024, hop_size=512,
+            use_conv_fft=True, window_type="hann",
+            post_transform_type=None,
+        )
+        waveform = torch.randn(1, 22050)
+        with torch.no_grad():
+            mel_log = transform_log(waveform)
+            mel_raw = transform_raw(waveform)
+        assert not torch.isnan(mel_log).any()
+        expected_log = torch.log(mel_raw + MusicalMelTransform.LOG_EPS)
+        torch.testing.assert_close(mel_log, expected_log, rtol=1e-5, atol=1e-6)
+
+    def test_raises_without_hop_size(self):
+        """Calling forward() without hop_size should raise RuntimeError."""
+        transform = MusicalMelTransform(frame_size=1024, use_conv_fft=True)
+        waveform = torch.randn(1, 4096)
+        with pytest.raises(RuntimeError, match="hop_size"):
+            transform(waveform)
+
+
+class TestWindowPeriodic:
+    """Tests for the window_periodic parameter."""
+
+    def test_periodic_true_vs_false_produce_different_windows(self):
+        """periodic=True and periodic=False should produce different window buffers."""
+        transform_periodic = MusicalMelTransform(
+            frame_size=1024, window_type="hann", window_periodic=True,
+        )
+        transform_symmetric = MusicalMelTransform(
+            frame_size=1024, window_type="hann", window_periodic=False,
+        )
+        assert not torch.allclose(transform_periodic.window, transform_symmetric.window)
+
+    def test_periodic_default_is_true(self):
+        """Default window_periodic should be True."""
+        transform = MusicalMelTransform(frame_size=1024, window_type="hann")
+        expected = torch.hann_window(1024, periodic=True)
+        torch.testing.assert_close(transform.window, expected)
+
+    def test_hamming_respects_periodic(self):
+        """window_periodic should also apply to hamming windows."""
+        transform_periodic = MusicalMelTransform(
+            frame_size=1024, window_type="hamming", window_periodic=True,
+        )
+        transform_symmetric = MusicalMelTransform(
+            frame_size=1024, window_type="hamming", window_periodic=False,
+        )
+        assert not torch.allclose(transform_periodic.window, transform_symmetric.window)
+
+
+class TestPostTransformType:
+    """Tests for the post_transform_type parameter."""
+
+    @pytest.fixture
+    def transform_none(self):
+        return MusicalMelTransform(frame_size=1024, use_conv_fft=True, post_transform_type=None)
+
+    @pytest.fixture
+    def test_frames(self):
+        return torch.randn(2, 1024)
+
+    def test_none_returns_raw_power(self, transform_none, test_frames):
+        """post_transform_type=None should return raw power values (non-negative)."""
+        with torch.no_grad():
+            mel, fft_power = transform_none.forward_frame(test_frames)
+        assert (mel >= 0).all()
+        assert (fft_power >= 0).all()
+
+    def test_db_matches_torchaudio(self, test_frames):
+        """post_transform_type='db' should match torchaudio.functional.amplitude_to_DB."""
+        transform_db = MusicalMelTransform(
+            frame_size=1024, use_conv_fft=True, post_transform_type="db",
+        )
+        transform_raw = MusicalMelTransform(
+            frame_size=1024, use_conv_fft=True, post_transform_type=None,
+        )
+        with torch.no_grad():
+            mel_db, _ = transform_db.forward_frame(test_frames)
+            mel_raw, _ = transform_raw.forward_frame(test_frames)
+        amin = float(torch.finfo(mel_raw.dtype).tiny)
+        expected_db = torchaudio.functional.amplitude_to_DB(
+            mel_raw, multiplier=10.0, amin=amin, db_multiplier=0.0, top_db=None,
+        )
+        torch.testing.assert_close(mel_db, expected_db, rtol=1e-5, atol=1e-6)
+
+    def test_log_applies_log_eps(self, test_frames):
+        """post_transform_type='log' should compute log(x + eps)."""
+        transform_log = MusicalMelTransform(
+            frame_size=1024, use_conv_fft=True, post_transform_type="log",
+        )
+        transform_raw = MusicalMelTransform(
+            frame_size=1024, use_conv_fft=True, post_transform_type=None,
+        )
+        with torch.no_grad():
+            mel_log, _ = transform_log.forward_frame(test_frames)
+            mel_raw, _ = transform_raw.forward_frame(test_frames)
+        expected_log = torch.log(mel_raw + MusicalMelTransform.LOG_EPS)
+        torch.testing.assert_close(mel_log, expected_log, rtol=1e-5, atol=1e-6)
+
+    def test_log1p_applies_log1p(self, test_frames):
+        """post_transform_type='log1p' should compute log1p(x)."""
+        transform_log1p = MusicalMelTransform(
+            frame_size=1024, use_conv_fft=True, post_transform_type="log1p",
+        )
+        transform_raw = MusicalMelTransform(
+            frame_size=1024, use_conv_fft=True, post_transform_type=None,
+        )
+        with torch.no_grad():
+            mel_log1p, _ = transform_log1p.forward_frame(test_frames)
+            mel_raw, _ = transform_raw.forward_frame(test_frames)
+        expected_log1p = torch.log1p(mel_raw)
+        torch.testing.assert_close(mel_log1p, expected_log1p, rtol=1e-5, atol=1e-6)
+
+
+class TestPowerParam:
+    """Tests for the power parameter."""
+
+    def test_power_1_gives_magnitude(self):
+        """power=1 should return |X| (magnitude), not |X|^2."""
+        transform_mag = MusicalMelTransform(
+            frame_size=1024, use_conv_fft=True, power=1, post_transform_type=None,
+        )
+        transform_pow = MusicalMelTransform(
+            frame_size=1024, use_conv_fft=True, power=2, post_transform_type=None,
+        )
+        test_input = torch.randn(1, 1024)
+        with torch.no_grad():
+            _, fft_mag = transform_mag.forward_frame(test_input)
+            _, fft_pow = transform_pow.forward_frame(test_input)
+        torch.testing.assert_close(fft_pow, fft_mag ** 2, rtol=1e-4, atol=1e-5)
